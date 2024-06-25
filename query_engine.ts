@@ -1,11 +1,13 @@
 import { StorageEngine } from "./storage_engine";
 
-class Query {
+export type ParsedQuery = {
+  get: string[];
+  from: string;
+};
+
+export class Query {
   query: string;
-  parsedQuery: {
-    get: string[];
-    from: string;
-  };
+  parsedQuery: ParsedQuery;
   constructor(query: string) {
     this.query = query;
     this.parsedQuery = {
@@ -22,7 +24,10 @@ class Query {
         case "select":
           i++;
           while (tokens[i] !== "from") {
-            this.parsedQuery.get = [...this.parsedQuery.get, tokens[i]];
+            this.parsedQuery.get = [
+              ...this.parsedQuery.get,
+              tokens[i].replace(",", ""),
+            ];
             i++;
           }
           i--;
@@ -36,10 +41,7 @@ class Query {
     console.log(this.parsedQuery);
   }
   exec() {
-    const storage = new StorageEngine();
-    storage.readEmployeeFromFile("./employee.bin");
+    const storage = new StorageEngine(this.parsedQuery);
+    return storage.readDataFromFile();
   }
 }
-
-const query = new Query("select * from employee;");
-query.exec();

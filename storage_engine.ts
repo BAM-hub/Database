@@ -1,27 +1,36 @@
 import fs from "fs";
+import { ParsedQuery } from "./query_engine";
 
 type Schema = {
   [key: string]: string;
   type: string;
-  len: string;
+  //@ts-ignore
+  len: number;
 }[];
 export class StorageEngine {
-  resolveTableSchema(data: any) {
-    const employeeSchema = `id int, name varchar(255), position varchar(255), salary real`;
+  parsedQuery: ParsedQuery;
+  filename: string;
+  constructor(parsedQuery: ParsedQuery) {
+    this.parsedQuery = parsedQuery;
+    this.filename = parsedQuery.from + ".bin";
+  }
+
+  resolveTableSchema() {
+    const employeeSchema = `id int, name varchar(255), position varchar(255), salary int`;
     const tokens = employeeSchema.split(",");
     // @ts-ignore
     const schema = tokens.reduce((prev, curr) => {
       const dec = curr.trim().split(" ");
       const type = dec[1];
       let scheme = {};
+
       scheme = {
         [dec[0]]: dec[0],
         type:
           type.indexOf("(") !== -1 ? dec[1].slice(0, type.indexOf("(")) : type,
         len: dec[1].includes("varchar")
-          ? dec[1].slice(type.indexOf("(") + 1, type.indexOf(")"))
-          : undefined,
-        value: data[`${dec[0]}`],
+          ? parseInt(dec[1].slice(type.indexOf("(") + 1, type.indexOf(")")))
+          : 4,
       };
       return [...prev, scheme];
     }, []);
@@ -29,8 +38,6 @@ export class StorageEngine {
   }
 
   serializeData(data: any) {
-    const schema = this.resolveTableSchema(data);
-    // console.log(schema);
     const arrayOfData = Object.values(data);
     const fileData = fs.readFileSync("./employee.bin");
     const buffer = Buffer.alloc(
@@ -62,36 +69,35 @@ export class StorageEngine {
     console.log(offset);
     return buffer;
   }
-  deserializeEmployee(buffer: Buffer): any {
-    const employees: any[] = [];
+  deserializeData(buffer: Buffer): any {
+    const output: any[] = [];
+    const schema = this.resolveTableSchema();
     let offset = 0;
     const recordSize = 4 + 255 + 255 + 4;
 
     while (offset + recordSize <= buffer.byteLength) {
-      console.log(`Offset at start: ${offset}`);
+      const value = schema.reduce((prev, curr) => {
+        if (!this.parsedQuery.get.includes(Object.keys(curr)[0])) return prev;
+        let value;
+        if (curr.type === "int") {
+          value = buffer.readInt32LE(offset);
+          offset += this.getOffset(Object.keys(curr)[0]);
+        }
+        if (curr.type === "varchar") {
+          value = buffer
+            .toString("utf-8", offset, offset + 255)
+            .replace(/\x00/g, "");
+          offset += this.getOffset(Object.keys(curr)[0]);
+        }
+        return {
+          ...prev,
+          [Object.keys(curr)[0]]: value,
+        };
+      }, {});
 
-      const id = buffer.readInt32LE(offset);
-      offset += 4;
-
-      const name = buffer
-        .toString("utf-8", offset, offset + 255)
-        .replace(/\x00/g, "");
-      offset += 255;
-
-      const position = buffer
-        .toString("utf-8", offset, offset + 255)
-        .replace(/\x00/g, "");
-      offset += 255;
-
-      const salary = buffer.readInt32LE(offset);
-      offset += 4;
-
-      console.log({ id, name, position, salary });
-      employees.push({ id, name, position, salary });
-      console.log(`Offset at end: ${offset}`);
+      output.push(value);
     }
-
-    console.log(employees);
+    return output;
   }
 
   saveToFile(filename: string, employee: any): void {
@@ -99,17 +105,29 @@ export class StorageEngine {
     fs.writeFileSync(filename, buffer);
     console.log(`Employee data saved to ${filename}`);
   }
-  readEmployeeFromFile(filename: string): any | null {
-    if (!fs.existsSync(filename)) {
-      console.error(`File ${filename} does not exist.`);
+  readDataFromFile(): any | null {
+    if (!fs.existsSync(this.filename)) {
+      console.error(`Table ${this.filename} does not exist.`);
       return null;
     }
 
-    const buffer = fs.readFileSync(filename);
-    return this.deserializeEmployee(buffer);
+    const buffer = fs.readFileSync(this.filename);
+    return this.deserializeData(buffer);
   }
-  getOffset(key: string, data: any) {
-    const schema = this.resolveTableSchema(data);
-    //@Todo implement this when needed
+  getOffset(key: string) {
+    const schema = this.resolveTableSchema();
+    let i = schema.findIndex((item) => Object.keys(item)[0] === key);
+
+    let sum = schema[i].len;
+    while (
+      i + 1 < schema.length &&
+      !this.parsedQuery.get.includes(Object.keys(schema[i + 1])[0])
+    ) {
+      i++;
+
+      sum += schema[i].len;
+    }
+
+    return sum;
   }
 }
